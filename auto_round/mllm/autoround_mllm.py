@@ -362,8 +362,16 @@ class AutoRoundMLLM(AutoRound):
                             data_new[key] = to_dtype(data_new[key], self.model.dtype)
                     if "input_ids" in data_new:
                         input_ids = data_new["input_ids"]
-                    else:
+                    elif "inputs_embeds" in data_new:
                         input_ids = data_new["inputs_embeds"]
+                    elif "input_features" in data_new:
+                        input_ids = data_new["input_features"]
+                    else:
+                        logger.error(
+                            "Only input_ids or inputs_embeds or input_features is supported, "
+                            "please check your dataset or update code here")
+                        exit(-1)
+
 
                 if input_ids.shape[-1] < self.seqlen:
                     pbar.update(1)

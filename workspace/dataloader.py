@@ -5,7 +5,7 @@ class Dataloader():
     def __init__(self, processor, model, n_samples=2):
         self.batch_size = 1
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self.torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        self.torch_dtype = torch.bfloat16
         self.wav_files = self.get_wav_files("/home/sdp/auto-round/workspace/dev-other-prepacked")
         if n_samples is not None:
             self.n_samples = n_samples if n_samples <= len(self.wav_files) else len(self.wav_files)
