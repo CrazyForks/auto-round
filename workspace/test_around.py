@@ -1,6 +1,5 @@
 import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer
-from datasets import Audio, load_dataset
 from dataloader import Dataloader
 from auto_round import AutoRoundMLLM, AutoRound
 
@@ -18,7 +17,7 @@ model = AutoModelForSpeechSeq2Seq.from_pretrained(
 model.to(device)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
-dataloader = Dataloader(processor, model, n_samples=2)
+dataloader = Dataloader(processor, model, n_samples=20)
 
 
 
@@ -44,6 +43,6 @@ print(autoround.model)
 # breakpoint()
 
 # save the quantized model, set format='auto_gptq' or 'auto_awq' to use other formats
-output_dir = "./rtn_whisper_large_v3"
+output_dir = "./atrd_whisper_large_v3"
 autoround.save_quantized(output_dir, format='llmcompressor', inplace=True)
 print(autoround.model)

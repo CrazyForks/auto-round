@@ -2,7 +2,7 @@ import torch
 
 
 class Dataloader():
-    def __init__(self, processor, model, n_samples=2):
+    def __init__(self, processor, model, n_samples=None):
         self.batch_size = 1
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.torch_dtype = torch.bfloat16
