@@ -139,8 +139,7 @@ def save_quantized_as_autoawq(output_dir, inplace=True, **kwargs):
     if hasattr(compressed_model, "config"):
         compressed_model.config.quantization_config = quantization_config
     safe_serialization = kwargs.get('safe_serialization', True)
-    dtype = torch.float16  ##force dtype to fp16
-    save(compressed_model, output_dir, safe_serialization=safe_serialization, dtype=dtype)
+    save(compressed_model, output_dir, safe_serialization=safe_serialization)
 
     return compressed_model
 
