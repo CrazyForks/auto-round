@@ -24,6 +24,7 @@ from functools import lru_cache
 
 import cpuinfo
 import psutil
+import importlib
 import torch
 import transformers
 from packaging import version
