@@ -1294,7 +1294,6 @@ class AutoRound(object):
             cnt += 1
 
     def _dump_target_bits(self, use_layer_config=True):
-        lm_head_name = get_lm_head_name(self.model)
         total_numel = 0
         total_bits = 0
         for n, m in self.model.named_modules():
@@ -1304,9 +1303,6 @@ class AutoRound(object):
                     m_bits = self.layer_config[n]["bits"] if n in self.layer_config else self.bits
                 else:
                     m_bits = m.bits
-                if lm_head_name == n and m_bits in [16, 32]:
-                    logger.info("skip lm_head when collecting target bits")
-                    continue
                 total_numel += m_numel
                 total_bits += m_numel * m_bits
         logger.info(f"current target bits is {round(total_bits/total_numel, 3)}")
@@ -2378,42 +2374,41 @@ class AutoRound(object):
             # Return the best combination
             return combination_list[best_index]
     
+        if True:
+            quantized_layers = [n for n, m in block.named_modules() if isinstance(m, SUPPORTED_LAYER_TYPES)]
+            from itertools import combinations
+            import gc
+            
+            combination_list = []
+            numel_list = []
+            loss_list = []
+            ATRD_FP8_NUM = int(os.environ.get("ATRD_FP8_NUM", 3))
+            for hp_layers in combinations(quantized_layers, ATRD_FP8_NUM):
+                cur_block =  block
+                combination_list.append(hp_layers)
+                # get numel
+                numel = get_numel(cur_block, hp_layers)
+                numel_list.append(numel)
+                # get loss
+                cur_block = create_block(cur_block, hp_layers)
+                loss = get_loss(cur_block)
+                loss_list.append(loss)
+                block = recover_block(cur_block, hp_layers)
+                gc.collect()
+                if is_optimum_habana_available():
+                    htcore.mark_step()
+                logger.debug(f"{hp_layers}, {loss}, {numel}")
 
-        quantized_layers = [n for n, m in block.named_modules() if isinstance(m, SUPPORTED_LAYER_TYPES)]
-        from itertools import combinations
-        import gc
-        
-        combination_list = []
-        numel_list = []
-        loss_list = []
-        ATRD_FP8_NUM = int(os.environ.get("ATRD_FP8_NUM", 3))
-        for hp_layers in combinations(quantized_layers, ATRD_FP8_NUM):
-            cur_block =  block
-            combination_list.append(hp_layers)
-            # get numel
-            numel = get_numel(cur_block, hp_layers)
-            numel_list.append(numel)
-            # get loss
-            cur_block = create_block(cur_block, hp_layers)
-            loss = get_loss(cur_block)
-            loss_list.append(loss)
-            block = recover_block(cur_block, hp_layers)
+            hp_layers = get_best_combination(combination_list, numel_list, loss_list)
+            logger.info(f"final hp layers: {hp_layers}")
+            for layer_name in hp_layers:
+                layer = get_module(block, layer_name)
+                layer.data_type, layer.bits, layer.sym = 'mx_fp8', 8, True
+                layer.act_data_type, layer.act_bits, layer.act_sym = 'mx_fp8', 8, True
             gc.collect()
             if is_optimum_habana_available():
                 htcore.mark_step()
-            logger.debug(f"{hp_layers}, {loss}, {numel}")
 
-        hp_layers = get_best_combination(combination_list, numel_list, loss_list)
-        logger.info(f"final hp layers: {hp_layers}")
-        for layer_name in hp_layers:
-            layer = get_module(block, layer_name)
-            layer.data_type, layer.bits, layer.sym = 'mx_fp8', 8, True
-            layer.act_data_type, layer.act_bits, layer.act_sym = 'mx_fp8', 8, True
-        gc.collect()
-        if is_optimum_habana_available():
-            htcore.mark_step()
-
-        # block.requires_grad_(True)
         quantized_layer_names, unquantized_layer_names = wrapper_block(
             block, self.enable_minmax_tuning, self.enable_norm_bias_tuning, device=self.device
         )
