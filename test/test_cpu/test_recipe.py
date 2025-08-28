@@ -35,8 +35,8 @@ class TestAutoRound(unittest.TestCase):
     def test_recipe_api(self):
         bits = 4
         act_bits = 4
-        data_type = "nv_fp"
-        act_data_type = "nv_fp4_with_static_gs"
+        data_type = "fp4_v2"
+        act_data_type = "fp4_v2_with_global_scale"
         group_size = 16
         sym = True
         autoround = AutoRound(

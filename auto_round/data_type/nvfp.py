@@ -223,6 +223,9 @@ def fp4_v2_with_global_scale(tensor, bits=4, group_size=16, v=0, tensor_max=None
         if tensor_max.numel() != 1:
             tensor_max = tensor.abs().max().to(torch.float32)
     global_scale = FLOAT8_UE5M3_MAX * FLOAT4_E2M1_MAX * get_reciprocal(tensor_max)
+    # Ensure global_scale is in float32, sometimes tensor is in bf16/fp16
+    if isinstance(global_scale, torch.Tensor):
+        global_scale = global_scale.to(torch.float32)
     qdq_res, scale = ref_fp4_quant(tensor, global_scale, group_size, v)
     qdq_res = revert_tensor_by_pad(qdq_res, orig_shape=orig_shape, pad_len=pad_len)
     return qdq_res.to(orig_dtype), scale, None
