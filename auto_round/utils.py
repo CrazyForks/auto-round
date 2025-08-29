@@ -2645,7 +2645,7 @@ def _generate_recipe(
     },
     # special mix-precision configuration
     mp_config={
-        "target_bits": 5,
+        "target_loss_ratio": 1.02,
     },
 ):
     """
@@ -2654,8 +2654,7 @@ def _generate_recipe(
     Args:
         mp_dtype (dict, optional): Dictionary specifying the mixed-precision data types for weights and activations.
             Defaults to {"data_type": "mx_fp8", "act_data_type": "mx_fp8"}.
-        mp_config (dict, optional): Dictionary specifying the mixed-precision configuration parameters such as
-            ratio, loss weight, and numel weight. Defaults to {"mp_ratio": 1/3, "loss_weight": 2.0, "numel_weight": 1.0}.
+        mp_config (dict, optional): Dictionary specifying the mixed-precision configuration parameters
 
     Returns:
         dict: A dictionary containing the quantization recipe for each layer, excluding the "lm_head" layer.
@@ -2676,10 +2675,11 @@ def _generate_recipe(
         avg_bits_all_block += result["bits"]
     avg_bits_all_block /= len(self.recipe_results["results"])
     logger.info(f"[Recipe Mode] Average bits of all blocks: {round(avg_bits_all_block, 3)}")
+    logger.info(f"[Recipe Mode] Mixed precision ops: {list(self.recipe_results['recipe'].keys())}")
     return self.recipe_results
 
 
-def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, input_others):
+def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, ref_q_input_ids, input_others):
     from itertools import combinations
 
     def get_output(block, input_ids):
@@ -2698,14 +2698,11 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
 
     # fetch mix-precision recipe configuration
     sample_num = self.recipe_mp_config.get("sample_num", 8)
-    target_bits = self.recipe_mp_config.get("target_bits", None)
     target_loss_ratio = self.recipe_mp_config.get("target_loss_ratio", 1.02)
 
     # calculate the number of layers to use mix-precision
     quantizable_layers = [n for n, m in block.named_modules() if isinstance(m, SUPPORTED_LAYER_TYPES)]
-    if target_bits is not None:
-        logger.warning_once(f"[Recipe Mode] target_bits: [{target_bits}-{target_bits+1}) is set.")
-    logger.warning_once(f"[Recipe Mode] target_loss_ratio: [{target_loss_ratio}) is set.")
+    logger.warning_once(f"[Recipe Mode] target_loss_ratio: {target_loss_ratio} is set.")
     # fetch raw low-bits dtype of block for recovering mix-precision block
     layer = get_module(block, quantizable_layers[0])
     raw_dtype = {
@@ -2730,9 +2727,10 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
 
     # generate reference output of sample input_ids
     q_input_ids = input_ids if q_input_ids is None else q_input_ids
+    ref_q_input_ids = input_ids if ref_q_input_ids is None else ref_q_input_ids
     reference_output = get_output(block, input_ids)
 
-    def get_loss(q_block):
+    def get_loss(q_block, q_input_ids):
         q_output = get_output(q_block, q_input_ids)
         total_loss = 0
         mse_loss = torch.nn.MSELoss(reduction="sum").to(self.device)
@@ -2748,7 +2746,8 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
     # get mxfp8_loss as reference
     mp_layers = quantizable_layers
     block = create_mp_block(block, mp_layers, self.recipe_mp_dtype)
-    mxfp8_loss = get_loss(block)
+    reference_q_output = get_output(block, ref_q_input_ids)
+    mxfp8_loss = get_loss(block, ref_q_input_ids)
     mxfp8_bits = get_avg_bits(block)
     block = recover_mp_block(block, mp_layers, raw_dtype)
     if is_hpex_available():
@@ -2756,7 +2755,7 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
 
     mp_layers = []
     block = create_mp_block(block, mp_layers, self.recipe_mp_dtype)
-    mxfp4_loss = get_loss(block)
+    mxfp4_loss = get_loss(block, q_input_ids)
     if is_hpex_available():
         htcore.mark_step()
     # early stop
@@ -2786,7 +2785,7 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
         if is_hpex_available():
             htcore.mark_step()
 
-        return reference_output, q_output
+        return reference_output, q_output, reference_q_output
     else:
         block = recover_mp_block(block, mp_layers, raw_dtype)
 
@@ -2802,9 +2801,9 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
             # get average bits of block
             # get loss of the mixed-precision block
             block = create_mp_block(block, mp_layers, self.recipe_mp_dtype)
-            loss = get_loss(block)
+            loss = get_loss(block, q_input_ids)
             loss_ratio = loss / mxfp8_loss
-            logger.debug(f"{mp_layers} loss: {loss_ratio}")
+            logger.debug(f"{block_name}: {mp_layers} loss: {loss_ratio}")
             if loss_ratio <= target_loss_ratio:
                 acceptable_op_num = r - 1
             else:
@@ -2817,7 +2816,7 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
             block = recover_mp_block(block, mp_layers, raw_dtype)
             if is_hpex_available():
                 htcore.mark_step()
-            logger.debug(f"{mp_layers} avg_bits: {avg_bits}")
+            logger.debug(f"{block_name}: {mp_layers} avg_bits: {avg_bits}")
 
     # get best combination
     best_loss_ratio = 1.0
@@ -2853,7 +2852,7 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, inpu
     if is_hpex_available():
         htcore.mark_step()
 
-    return reference_output, q_output
+    return reference_output, q_output, reference_q_output
 
 
 ###############################################################################################

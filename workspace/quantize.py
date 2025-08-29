@@ -225,11 +225,9 @@ if __name__ == "__main__":
 
         recipe_results = autoround._generate_recipe(
             mp_config={
-                "target_bits": args.target_bits,
                 "target_loss_ratio": args.target_loss_ratio,
             },
         )
-        print(recipe_results["results"])
         autoround.layer_config = recipe_results["recipe"]
         autoround.quantize()
         model = autoround.model
