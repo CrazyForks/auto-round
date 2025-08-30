@@ -2648,7 +2648,7 @@ class AutoRound(object):
                 if not self.model.device.type == "meta" or self.low_cpu_mem_usage:
                     block = block.to(device)
                 input_ids, q_input_ids, ref_q_input_ids = self._generate_block_recipe(
-                    block, block_name, input_ids, q_input_ids, ref_q_input_ids, input_others
+                    block, block_name, len(block_names), input_ids, q_input_ids, ref_q_input_ids, input_others
                 )
                 if is_hpex_available():
                     htcore.mark_step()

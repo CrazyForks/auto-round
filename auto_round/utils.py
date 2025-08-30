@@ -2679,7 +2679,7 @@ def _generate_recipe(
     return self.recipe_results
 
 
-def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, ref_q_input_ids, input_others):
+def _generate_block_recipe(self, block, block_name, block_num, input_ids, q_input_ids, ref_q_input_ids, input_others):
     from itertools import combinations
 
     def get_output(block, input_ids):
@@ -2699,10 +2699,12 @@ def _generate_block_recipe(self, block, block_name, input_ids, q_input_ids, ref_
     # fetch mix-precision recipe configuration
     sample_num = self.recipe_mp_config.get("sample_num", 8)
     target_loss_ratio = self.recipe_mp_config.get("target_loss_ratio", 1.02)
+    block_id = int(block_name.split(".")[-1]) + 1
+    target_loss_ratio = 1 + (target_loss_ratio - 1) * (block_id / block_num)
 
     # calculate the number of layers to use mix-precision
     quantizable_layers = [n for n, m in block.named_modules() if isinstance(m, SUPPORTED_LAYER_TYPES)]
-    logger.warning_once(f"[Recipe Mode] target_loss_ratio: {target_loss_ratio} is set.")
+    logger.info(f"[Recipe Mode] target_loss_ratio for {block_name}: {target_loss_ratio}.")
     # fetch raw low-bits dtype of block for recovering mix-precision block
     layer = get_module(block, quantizable_layers[0])
     raw_dtype = {
