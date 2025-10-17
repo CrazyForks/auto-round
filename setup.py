@@ -8,14 +8,17 @@ from setuptools import find_packages, setup
 
 os.environ["CC"] = "g++"
 os.environ["CXX"] = "g++"
+
+# Check whether to use scm to get version, default is true. Set USE_SCM_VERSION=0 to disable it for release build.
+USE_SCM = os.getenv("USE_SCM_VERSION", "1") == "1"
 try:
     filepath = "./auto_round/version.py"
     with open(filepath) as version_file:
         (__version__,) = re.findall('__version__ = "(.*)"', version_file.read())
 except Exception as error:
     assert False, "Error: Could not open '%s' due %s\n" % (filepath, error)
-
 version = __version__
+
 
 # All BUILD_* flags are initially set to `False`` and
 # will be updated to `True` if the corresponding environment check passes.
@@ -143,7 +146,9 @@ if __name__ == "__main__":
     setup(
         name=package_name,
         author="Intel AIPT Team",
-        version=version,
+        version=None if USE_SCM else version,
+        use_scm_version=USE_SCM,
+        setup_requires=["setuptools_scm"] if USE_SCM else [],
         author_email="wenhua.cheng@intel.com, weiwei1.zhang@intel.com, heng.guo@intel.com",
         description="Repository of AutoRound: Advanced Weight-Only Quantization Algorithm for LLMs",
         long_description=open("README.md", "r", encoding="utf-8").read(),
