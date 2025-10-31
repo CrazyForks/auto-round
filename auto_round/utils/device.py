@@ -802,6 +802,7 @@ def get_moe_memory_ratio(block: torch.nn.Module) -> float:
                     f"MoE detected: {num_experts_per_tok}/{num_experts} experts active per token, "
                     f"activation memory ratio: {moe_ratio:.2f}"
                 )
+                logger.debug(f"Using MoE memory ratio: {moe_ratio:.4f}")
                 return moe_ratio
             break  # Only check once per block
 
@@ -836,8 +837,7 @@ def estimate_tuning_block_mem(
     seq_len = input_ids[0].shape[1] if input_ids and len(input_ids[0].shape) >= 2 else 1
     element_size = input_ids[0].element_size() if input_ids else 2  # Default to 2 bytes (fp16/bf16)
 
-    # Get MoE memory ratio (1.0 for non-MoE models)
-    moe_ratio = get_moe_memory_ratio(block)
+    moe_ratio = get_moe_memory_ratio(block)  # Get MoE memory ratio (1.0 for non-MoE models)
 
     for name, module in block.named_modules():
         if check_to_quantized(module):
@@ -877,24 +877,25 @@ def estimate_tuning_block_mem(
     # Roughly estimate additional memory for attention and other operations
     # For MoE expert layers, multiply activation memory by the ratio of active experts
     # For non-MoE layers (attention, norm, etc.), use full activation memory
-    additional_activation_memory = 0.0
+    layer_activation_memory = 0.0
     for layer_name, info in layer_memory_dict.items():
         if info.get("is_moe_expert", False):
             # MoE expert layer: only a fraction of experts are active
-            additional_activation_memory += info["output_memory"] * moe_ratio
+            layer_activation_memory += info["output_memory"] * moe_ratio
         else:
             # Non-MoE layer: use full activation memory
-            additional_activation_memory += info["output_memory"]
+            layer_activation_memory += info["output_memory"]
 
+    # layer_activation_memory considers other ops activation memory
     # 1GB considers norm weight, sdpa, reference_output, etc.
-    additional_memory = additional_activation_memory + 1  # GB
+    additional_memory = layer_activation_memory + 1  # GB
     if torch.xpu.is_available():
         # https://github.com/intel/torch-xpu-ops/issues/2232
         # TODO: XPU takes more memory than expected. for llama 8B, it's about 12 GB
         xpu_additional_memory = 12  # GB
         additional_memory += xpu_additional_memory
 
-    return layer_memory_dict, block_input_output_memory, additional_memory
+    return layer_memory_dict, layer_activation_memory, block_input_output_memory, additional_memory
 
 
 def set_auto_device_map_for_block_with_tuning(
@@ -945,23 +946,25 @@ def set_auto_device_map_for_block_with_tuning(
         device_0 = f"{device_name}:0"
 
     device_0_memory = get_device_memory(device_list[0] if device_list else 0)
-    layer_memory_dict, block_input_output_memory, additional_memory = estimate_tuning_block_mem(
-        block, input_ids, pick_samples
+    layer_memory_dict, layer_activation_memory, block_input_output_memory, additional_memory = (
+        estimate_tuning_block_mem(block, input_ids, pick_samples)
     )
     if low_gpu_mem_usage:
         block_input_output_memory = 0
 
     # Calculate total block memory from layer memory dict (including both param and output memory)
     total_block_param_memory = sum(info["param_memory"] for info in layer_memory_dict.values())
-    total_block_output_memory = sum(info["output_memory"] for info in layer_memory_dict.values())
+    total_block_output_memory = layer_activation_memory
 
     # Average dispatch strategy
     # card_0_left_memory = card_0_mem - block_input_output_memory - additional_memory - layer_outputs_memory
     logger.debug("Card 0 used memory details:")
     logger.debug(f"  Block input output cache memory: {block_input_output_memory} GB")
-    logger.debug(f"  Quantized layer outputs memory: {total_block_output_memory} GB")
+    logger.debug(f"  Quantized layer outputs memory: {layer_activation_memory} GB")
     logger.debug(f"  Additional_memory from other ops: {additional_memory} GB")
-    card_0_left_memory = device_0_memory - block_input_output_memory - total_block_output_memory - additional_memory
+    card_0_left_memory = max(
+        0, device_0_memory - block_input_output_memory - total_block_output_memory - additional_memory
+    )
 
     # Calculate total available memory across all devices
     total_available_memory = card_0_left_memory
